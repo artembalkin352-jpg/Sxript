@@ -1,123 +1,1065 @@
---[[
-    Полноценный скрипт меню для Tower of Hell (всё в одном файле)
-    Создает интерфейс на клиенте и обрабатывает телепортацию на сервере.
-]]
+-- Проверка на то, что игра запущена
+if game.PlaceId ~= 142823291 then
+    warn("Этот скрипт предназначен только для Murder Mystery 2!")
+    return
+end
 
+-- Сервисы
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local TweenService = game:GetService("TweenService")
 
--- 1. Создание папки и события для связи клиента с сервером (если их нет)
-local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-if not remotes then
-	remotes = Instance.new("Folder")
-	remotes.Name = "Remotes"
-	remotes.Parent = ReplicatedStorage
+-- Настройки по умолчанию
+local currentLang = "RU"
+local currentTheme = "Orange" 
+local currentPlatform = "Mobile" 
+local silentAimKey = Enum.UserInputType.MouseButton1 
+local aimbotKey = Enum.UserInputType.MouseButton2 -- Кнопка для ПК Аимбота (ПКМ)
+local bindingKey = false 
+local bindingAimbotKey = false
+
+-- Таблица для активных флингов
+local activeFlings = {}
+
+local UIColors = {
+    Orange = Color3.fromRGB(255, 128, 0),
+    Blue = Color3.fromRGB(46, 204, 113)
+}
+	
+local Translations = {
+    RU = {
+        main = "Главная",
+        combat = "Бой",
+        fling = "Флинг игроков",
+        settings = "Настройки",
+        search = "Поиск...",
+        esp = "ESP игроков (Подсветка)",
+        gunEsp = "Подсветка пистолета",
+        silent = "Сайлент аим (Шериф)",
+        aimbot = "Аимбот (ПК плавный)",
+        fovVis = "Показывать круг FOV",
+        fovRadius = "Радиус круга аима (FOV): ",
+        langTitle = "Язык интерфейса",
+        themeTitle = "Цвет интерфейса",
+        platformTitle = "Версия интерфейса",
+        flingTitle = "Флинг: "
+    },
+    EN = {
+        main = "Main",
+        combat = "Combat",
+        fling = "Player Fling",
+        settings = "Settings",
+        search = "Search...",
+        esp = "Player ESP (Highlight)",
+        gunEsp = "Gun ESP (Yellow Drop)",
+        silent = "Silent Aim (Sheriff)",
+        aimbot = "Aimbot (PC Smooth)",
+        fovVis = "Show FOV Circle",
+        fovRadius = "Aim FOV Radius: ",
+        langTitle = "Interface Language",
+        themeTitle = "Interface Theme Color",
+        platformTitle = "UI Platform Mode",
+        flingTitle = "Fling: "
+    }
+}
+
+local function T(key)
+    return Translations[currentLang][key] or key
 end
 
-local teleportEvent = remotes:FindFirstChild("TeleportToTop")
-if not teleportEvent then
-	teleportEvent = Instance.new("RemoteEvent")
-	teleportEvent.Name = "TeleportToTop"
-	teleportEvent.Parent = remotes
+-- Уникальное имя для GUI
+local GuiName = "ShershnevScript_MM2"
+if game.CoreGui:FindFirstChild(GuiName) then
+    game.CoreGui:FindFirstChild(GuiName):Destroy()
 end
 
--- 2. Серверная логика телепортации
-teleportEvent.OnServerEvent:Connect(function(player)
-	local character = player.Character
-	if not character then return end
-	
-	local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	
-	if humanoidRootPart and humanoid and humanoid.Health > 0 then
-		-- Телепортация на вершину башни (высота 500 стадов)
-		humanoidRootPart.CFrame = CFrame.new(0, 500, 0)
-		-- Сбрасываем инерцию и скорость падения
-		humanoidRootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-	end
+-- --- Создание GUI Элементов ---
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = GuiName
+ScreenGui.Parent = game.CoreGui
+
+-- Полупрозрачная мобильная кнопка SilentAim (по форме картинки) в правой части экрана
+local MobileSilentBtn = Instance.new("TextButton")
+MobileSilentBtn.Name = "MobileSilentBtn"
+MobileSilentBtn.Parent = ScreenGui
+MobileSilentBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+MobileSilentBtn.BackgroundTransparency = 0.5 -- Полупрозрачная
+MobileSilentBtn.Position = UDim2.new(0.82, 0, 0.65, 0)
+MobileSilentBtn.Size = UDim2.new(0, 130, 0, 60)
+MobileSilentBtn.Font = Enum.Font.SourceSansBold
+MobileSilentBtn.Text = "SILENT AIM"
+MobileSilentBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MobileSilentBtn.TextSize = 15
+MobileSilentBtn.Active = true
+MobileSilentBtn.Draggable = true -- Можно перетаскивать по экрану пальцем
+MobileSilentBtn.Visible = false
+
+local MobileSilentCorner = Instance.new("UICorner")
+MobileSilentCorner.CornerRadius = UDim.new(1, 0) -- Закругленная капсула как на фото
+MobileSilentCorner.Parent = MobileSilentBtn
+
+local MobileSilentStroke = Instance.new("UIStroke")
+MobileSilentStroke.Color = Color3.fromRGB(180, 180, 190)
+MobileSilentStroke.Thickness = 2
+MobileSilentStroke.Transparency = 0.4
+MobileSilentStroke.Parent = MobileSilentBtn
+
+-- Переменная состояния нажатия мобильной кнопки
+local mobileSilentPressed = false
+MobileSilentBtn.MouseButton1Down:Connect(function()
+    mobileSilentPressed = true
+    MobileSilentBtn.BackgroundTransparency = 0.2
+end)
+MobileSilentBtn.MouseButton1Up:Connect(function()
+    mobileSilentPressed = false
+    MobileSilentBtn.BackgroundTransparency = 0.5
+end)
+MobileSilentBtn.TouchTap:Connect(function()
+    -- Для надежности на телефонах дела
+ем быстрый импульс нажатия
+    mobileSilentPressed = true
+    task.delay(0.15, function()
+        mobileSilentPressed = false
+    end)
 end)
 
--- 3. Автоматическое создание интерфейса для каждого игрока при входе
-Players.PlayerAdded:Connect(function(player)
-	local playerGui = player:WaitForChild("PlayerGui")
-	
-	-- Проверяем, не создан ли уже GUI
-	if playerGui:FindFirstChild("MainMenuGui") then return end
-	
-	-- Главный контейнер GUI
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "MainMenuGui"
-	screenGui.IgnoreGuiInset = true
-	screenGui.Parent = playerGui
-	
-	-- Задний фон меню (стиль ретро / темно-желтые тона)
-	local background = Instance.new("Frame")
-	background.Name = "MenuFrame"
-	background.Size = UDim2.new(1, 0, 1, 0)
-	background.BackgroundColor3 = Color3.fromRGB(45, 38, 28) -- Темно-коричневый ретро-фон
-	background.BorderSizePixel = 0
-	background.Parent = screenGui
-	
-	-- Большая кнопка START по центру
-	local startButton = Instance.new("TextButton")
-	startButton.Name = "StartButton"
-	startButton.Size = UDim2.new(0, 280, 0, 80)
-	startButton.Position = UDim2.new(0.5, -140, 0.5, -40) -- Точный центр экрана
-	startButton.BackgroundColor3 = Color3.fromRGB(46, 204, 113) -- Ярко-зеленый цвет
-	startButton.Text = "START"
-	startButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-	startButton.TextSize = 36
-	startButton.Font = Enum.Font.FredokaOne
-	startButton.Parent = background
-	
-	-- Скругление углов кнопки
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 14)
-	corner.Parent = startButton
-	
-	-- Текст-заголовок (название игры слева, как на референсе)
-	local titleLabel = Instance.new("TextLabel")
-	titleLabel.Size = UDim2.new(0, 400, 0, 60)
-	titleLabel.Position = UDim2.new(0.05, 0, 0.15, 0)
-	titleLabel.BackgroundTransparency = 1
-	titleLabel.Text = "TOWER OF HELL"
-	titleLabel.TextColor3 = Color3.fromRGB(241, 196, 15) -- Желтоватый стиль ретро
-	titleLabel.TextSize = 42
-	titleLabel.Font = Enum.Font.Black
-	titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-	titleLabel.Parent = background
-	
-	-- Дополнительные пункты меню для атмосферы
-	local options = {"DOWNLOAD CONTENT", "ACHIEVEMENTS", "HELP & OPTIONS", "EXIT GAME"}
-	for i, text in ipairs(options) do
-		local optLabel = Instance.new("TextLabel")
-		optLabel.Size = UDim2.new(0, 300, 0, 40)
-		optLabel.Position = UDim2.new(0.05, 0, 0.25 + (i * 0.07), 0)
-		optLabel.BackgroundTransparency = 1
-		optLabel.Text = text
-		optLabel.TextColor3 = Color3.fromRGB(200, 160, 100)
-		optLabel.TextSize = 22
-		optLabel.Font = Enum.Font.GothamBold
-		optLabel.TextXAlignment = Enum.TextXAlignment.Left
-		optLabel.Parent = background
-	end
-	
-	-- 4. Клиентская логика обработки нажатия (внедряем через LocalScript с помощью ModuleScript/строки или дублируем логику клика)
--- Поскольку это Server Script, создаем LocalScript внутри PlayerGui для обработки нажатия мыши
-	local localScriptCode = [[
-		local button = script.Parent
-		local screenGui = button.Parent.Parent
-		local remotes = game:GetService("ReplicatedStorage"):WaitForChild("Remotes")
-		local teleportEvent = remotes:WaitForChild("TeleportToTop")
-		
-		button.MouseButton1Click:Connect(function()
-			screenGui.Enabled = false -- Скрываем меню
-			teleportEvent:FireServer() -- Запрашиваем телепортацию у сервера
-		end)
-	]]
-	
-	-- Создаем LocalScript программно и отправляем игроку
-	local loaderScript = Instance.new("LocalScript")
-	loaderScript.Source = localScriptCode
-	loaderScript.Parent = startButton
+-- Уведомление снизу по центру для пистолета
+local GunNotifyLabel = Instance.new("TextLabel")
+GunNotifyLabel.Name = "GunNotifyLabel"
+GunNotifyLabel.Parent = ScreenGui
+GunNotifyLabel.BackgroundTransparency = 0.3
+GunNotifyLabel.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
+GunNotifyLabel.Position = UDim2.new(0.5, -175, 1.1, 0) -- Спрятано внизу
+GunNotifyLabel.Size = UDim2.new(0, 350, 0, 40)
+GunNotifyLabel.Font = Enum.Font.SourceSansBold
+GunNotifyLabel.Text = "⚠️ Был убит шериф забери пистолет"
+GunNotifyLabel.TextColor3 = Color3.fromRGB(255, 220, 0)
+GunNotifyLabel.TextSize = 16
+GunNotifyLabel.Visible = false
+
+local NotifyCorner = Instance.new("UICorner")
+NotifyCorner.CornerRadius = UDim.new(0, 8)
+NotifyCorner.Parent = GunNotifyLabel
+
+-- 1. Круглая Иконка (для телефонов)
+local IconFrame = Instance.new("Frame")
+IconFrame.Name = "IconFrame"
+IconFrame.Parent = ScreenGui
+IconFrame.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
+IconFrame.BackgroundTransparency = 0.2
+IconFrame.Position = UDim2.new(0, 20, 0.5, -25)
+IconFrame.Size = UDim2.new(0, 50, 0, 50)
+IconFrame.Active = true
+IconFrame.Draggable = true
+
+local IconUICorner = Instance.new("UICorner")
+IconUICorner.CornerRadius = UDim.new(1, 0)
+IconUICorner.Parent = IconFrame
+
+local IconImage = Instance.new("ImageLabel")
+IconImage.Name = "IconImage"
+IconImage.Parent = IconFrame
+IconImage.BackgroundTransparency = 1
+IconImage.Position = UDim2.new(0.1, 0, 0.1, 0)
+IconImage.Size = UDim2.new(0.8, 0, 0.8, 0)
+IconImage.Image = "rbxassetid://122280726731922"
+
+-- 2. Рисование круга FOV на экране
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Visible = false
+FOVCircle.Filled = false
+FOVCircle.Radius = 120
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Thickness = 1.5
+FOVCircle.Transparency = 0.7
+
+-- 3. Основное Меню
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(13, 19, 33)
+MainFrame.BackgroundTransparency = 0.15
+MainFrame.BorderSizePixel = 0
+MainFrame.Position = UDim2.new(0.5, -350, 0.5, -200)
+MainFrame.Size = UDim2.new(0, 700, 0, 420)
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Visible = false
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 8)
+MainCorner.Parent = MainFrame
+
+-- Верхняя панель
+local TopBar = Instance.new("Frame")
+TopBar.Parent = MainFrame
+TopBar.BackgroundTransparency = 1
+TopBar.Position = UDim2.new(0, 210, 0, 15)
+TopBar.Size = UDim2.new(1, -220, 0, 35)
+
+local SearchBox = Instance.new("TextBox")
+SearchBox.Parent = TopBar
+SearchBox.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+SearchBox.BackgroundTransparency = 0.4
+SearchBox.Position = UDim2.new(0, 120, 0, 0)
+SearchBox.Size = UDim2.new(0, 300, 0, 32)
+SearchBox.Font = Enum.Font.SourceSans
+SearchBox.PlaceholderText = "Поиск..."
+SearchBox.Text = ""
+SearchBox.TextColor3 = Color3.fromRGB(220, 220, 220)
+SearchBox.TextSize = 14
+SearchBox.TextXAlignment = Enum.TextXAlignment.Left
+
+local SearchCorner = Instance.new("UICorner")
+SearchCorner.CornerRadius = UDim.new(0, 6)
+SearchCorner.Parent = SearchBox
+
+local CloseButton = Instance.new("TextButton")
+CloseButton.Parent = TopBar
+CloseButton.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+CloseButton.BackgroundTransparency = 0.4
+CloseButton.Position = UDim2.new(1, -35, 0, 0)
+CloseButton.Size = UDim2.new(0, 32, 0, 32)
+CloseButton.Font = Enum.Font.SourceSansBold
+CloseButton.Text = "✕"
+CloseButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+CloseButton.TextSize = 16
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 6)
+CloseCorner.Parent = CloseButton
+
+-- Левая панель навигации (Sidebar)
+local Sidebar = Instance.new("ScrollingFrame")
+Sidebar.Parent = MainFrame
+Sidebar.BackgroundColor3 = Color3.fromRGB(10, 15, 26)
+Sidebar.BackgroundTransparency = 0.5
+Sidebar.BorderSizePixel = 0
+Sidebar.Size = UDim2.new(0, 195, 1, 0)
+Sidebar.CanvasSize = UDim2.new(0, 0, 0, 350)
+Sidebar.
+ScrollBarThickness = 2
+
+local SidebarCorner = Instance.new("UICorner")
+SidebarCorner.CornerRadius = UDim.new(0, 8)
+SidebarCorner.Parent = Sidebar
+
+-- НАЗВАНИЕ СВЕРХУ СЛЕВА: SHERSHNEV SCRIPT
+local LogoLabel = Instance.new("TextLabel")
+LogoLabel.Parent = Sidebar
+LogoLabel.BackgroundTransparency = 1
+LogoLabel.Position = UDim2.new(0, 15, 0, 15)
+LogoLabel.Size = UDim2.new(1, -30, 0, 45)
+LogoLabel.Font = Enum.Font.SourceSansBold
+LogoLabel.Text = "SHERSHNEV SCRIPT\n<font size='10' color='#8899aa'>MM2 - v0.46</font>"
+LogoLabel.RichText = true
+LogoLabel.TextColor3 = Color3.fromRGB(255, 128, 0)
+LogoLabel.TextSize = 15
+LogoLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local SidebarList = Instance.new("UIListLayout")
+SidebarList.Parent = Sidebar
+SidebarList.SortOrder = Enum.SortOrder.LayoutOrder
+SidebarList.Padding = UDim.new(0, 4)
+
+local function createSidebarBtn(name, text, order)
+    local btn = Instance.new("TextButton")
+    btn.Name = name
+    btn.Parent = Sidebar
+    btn.BackgroundColor3 = Color3.fromRGB(25, 35, 55)
+    btn.BackgroundTransparency = 1
+    btn.Position = UDim2.new(0, 10, 0, 0)
+    btn.Size = UDim2.new(1, -20, 0, 36)
+    btn.Font = Enum.Font.SourceSansSemibold
+    btn.Text = "   " .. text
+    btn.TextColor3 = Color3.fromRGB(150, 160, 175)
+    btn.TextSize = 14
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.LayoutOrder = order
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = btn
+    return btn
+end
+
+local TabMain = createSidebarBtn("TabMain", "Главная", 1)
+local TabCombat = createSidebarBtn("TabCombat", "Бой", 2)
+local TabFling = createSidebarBtn("TabFling", "Флинг игроков", 3)
+local TabSettings = createSidebarBtn("TabSettings", "Настройки", 4)
+
+-- Контейнер страниц
+local PagesContainer = Instance.new("Frame")
+PagesContainer.Parent = MainFrame
+PagesContainer.BackgroundTransparency = 1
+PagesContainer.Position = UDim2.new(0, 210, 0, 65)
+PagesContainer.Size = UDim2.new(1, -225, 1, -75)
+
+-- Страница: Главная
+local PageMain = Instance.new("ScrollingFrame")
+PageMain.Parent = PagesContainer
+PageMain.BackgroundTransparency = 1
+PageMain.Size = UDim2.new(1, 0, 1, 0)
+PageMain.CanvasSize = UDim2.new(0, 0, 0, 200)
+PageMain.ScrollBarThickness = 3
+PageMain.Visible = true
+
+local MainDesc = Instance.new("TextLabel")
+MainDesc.Parent = PageMain
+MainDesc.BackgroundTransparency = 1
+MainDesc.Size = UDim2.new(1, -10, 0, 100)
+MainDesc.Font = Enum.Font.SourceSans
+MainDesc.Text = "Добро пожаловать в SHERSHNEV SCRIPT!\nДобавлена полупрозрачная мобильная кнопка Silent Aim без задержки."
+MainDesc.TextColor3 = Color3.fromRGB(200, 210, 225)
+MainDesc.TextSize = 15
+MainDesc.TextWrapped = true
+MainDesc.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Страница: Бой
+local PageCombat = Instance.new("ScrollingFrame")
+PageCombat.Parent = PagesContainer
+PageCombat.BackgroundTransparency = 1
+PageCombat.Size = UDim2.new(1, 0, 1, 0)
+PageCombat.CanvasSize = UDim2.new(0, 0, 0, 350)
+PageCombat.ScrollBarThickness = 3
+PageCombat.Visible = false
+
+local CombatLayout = Instance.new("UIListLayout")
+CombatLayout.Parent = PageCombat
+CombatLayout.SortOrder = Enum.SortOrder.LayoutOrder
+CombatLayout.Padding = UDim.new(0, 8)
+
+local activeToggles = {}
+
+local function createToggleRow(parent, textKey, callback, hasSettings, settingsCallback)
+    local row = Instance.new("Frame")
+    row.Parent = parent
+    row.BackgroundColor3 = Color3.fromRGB(18, 26, 42)
+    row.BackgroundTransparency = 0.4
+    row.Size = UDim2.new(1, -10, 0, 42)
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = row
+
+    local label = Instance.new("TextLabel")
+    label.Name = "Label"
+    label.Parent = row
+    label.BackgroundTransparency = 1
+    label.Position = UDim2.new(0, 12, 0, 0)
+    label.Size = UDim2.new(0, 210, 1, 0)
+    label.Font = Enum.Font.SourceSansSemibold
+    label.Text = T(textKey)
+    label.TextColor3 = Color3.fromRGB(220, 225, 235)
+    label.TextSize = 14
+    label.TextXAlignment = Enum.TextXAlignment.Left
+
+    table.insert(activeToggles, {Label = label, Key = t
+extKey})
+
+    if hasSettings then
+        local gearBtn = Instance.new("TextButton")
+        gearBtn.Parent = row
+        gearBtn.BackgroundColor3 = Color3.fromRGB(35, 45, 65)
+        gearBtn.Position = UDim2.new(1, -100, 0.5, -11)
+        gearBtn.Size = UDim2.new(0, 42, 0, 22)
+        gearBtn.Font = Enum.Font.SourceSansBold
+        gearBtn.Text = "⚙ [MB1]"
+        gearBtn.TextColor3 = Color3.fromRGB(200, 210, 225)
+        gearBtn.TextSize = 11
+
+        local gCorner = Instance.new("UICorner")
+        gCorner.CornerRadius = UDim.new(0, 4)
+        gCorner.Parent = gearBtn
+
+        settingsCallback(gearBtn)
+    end
+
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Parent = row
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 55, 75)
+    toggleBtn.Position = UDim2.new(1, -50, 0.5, -11)
+    toggleBtn.Size = UDim2.new(0, 40, 0, 22)
+    toggleBtn.Text = ""
+
+    local tCorner = Instance.new("UICorner")
+    tCorner.CornerRadius = UDim.new(1, 0)
+    tCorner.Parent = toggleBtn
+
+    local circle = Instance.new("Frame")
+    circle.Name = "Circle"
+    circle.Parent = toggleBtn
+    circle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    circle.Position = UDim2.new(0, 2, 0.5, -9)
+    circle.Size = UDim2.new(0, 18, 0, 18)
+
+    local cCorner = Instance.new("UICorner")
+    cCorner.CornerRadius = UDim.new(1, 0)
+    cCorner.Parent = circle
+
+    local state = false
+    toggleBtn.MouseButton1Click:Connect(function()
+        state = not state
+        if state then
+            toggleBtn.BackgroundColor3 = UIColors[currentTheme]
+            circle:TweenPosition(UDim2.new(1, -20, 0.5, -9), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.15, true)
+        else
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 55, 75)
+            circle:TweenPosition(UDim2.new(0, 2, 0.5, -9), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.15, true)
+        end
+        callback(state)
+    end)
+
+    return row
+end
+
+createToggleRow(PageCombat, "esp", function(v) _G.EspEnabled = v end, false)
+createToggleRow(PageCombat, "gunEsp", function(v) _G.GunEspEnabled = v end, false)
+
+createToggleRow(PageCombat, "silent", function(v) 
+    _G.SilentAimEnabled = v 
+    if currentPlatform == "Mobile" then
+        MobileSilentBtn.Visible = v
+    end
+end, true, function(gearBtn)
+    gearBtn.MouseButton1Click:Connect(function()
+        bindingKey = true
+        gearBtn.Text = "..."
+        
+        local connection
+        connection = UserInputService.InputBegan:Connect(function(input, gp)
+            if input.UserInputType == Enum.UserInputType.Keyboard or input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.MouseButton2 then
+                silentAimKey = input.KeyCode ~= Enum.KeyCode.Unknown and input.KeyCode or input.UserInputType
+                local keyName = input.KeyCode ~= Enum.KeyCode.Unknown and input.KeyCode.Name or (input.UserInputType == Enum.UserInputType.MouseButton1 and "MB1" or "MB2")
+                gearBtn.Text = "⚙ [" .. keyName .. "]"
+                bindingKey = false
+                connection:Disconnect()
+            end
+        end)
+    end)
+end)
+
+createToggleRow(PageCombat, "aimbot", function(v)
+    _G.AimbotEnabled = v
+end, true, function(gearBtn)
+    gearBtn.Text = "⚙ [RMB]"
+    gearBtn.MouseButton1Click:Connect(function()
+        bindingAimbotKey = true
+        gearBtn.Text = "..."
+        
+        local connection
+        connection = UserInputService.InputBegan:Connect(function(input, gp)
+            if input.UserInputType == Enum.UserInputType.Keyboard or input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.MouseButton2 then
+                aimbotKey = input.KeyCode ~= Enum.KeyCode.Unknown and input.KeyCode or input.UserInputType
+                local keyName = input.KeyCode ~= Enum.KeyCode.Unknown and input.KeyCode.Name or (input.UserInputType == Enum.UserInputType.MouseButton1 and "MB1" or (input.UserInputType == Enum.UserInputType.MouseButton2 and "RMB" or "Key"))
+                gearBtn.Text = "⚙ [" .. keyName .. "]"
+bindingAimbotKey = false
+                connection:Disconnect()
+            end
+        end)
+    end)
+end)
+
+createToggleRow(PageCombat, "fovVis", function(v)
+    _G.FovVisible = v
+    FOVCircle.Visible = v
+end, false)
+
+-- Страница: Настройки
+local PageSettings = Instance.new("ScrollingFrame")
+PageSettings.Parent = PagesContainer
+PageSettings.BackgroundTransparency = 1
+PageSettings.Size = UDim2.new(1, 0, 1, 0)
+PageSettings.CanvasSize = UDim2.new(0, 0, 0, 300)
+PageSettings.ScrollBarThickness = 3
+PageSettings.Visible = false
+
+local SettingsLayout = Instance.new("UIListLayout")
+SettingsLayout.Parent = PageSettings
+SettingsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+SettingsLayout.Padding = UDim.new(0, 12)
+
+-- Слайдер FOV
+local SliderContainer = Instance.new("Frame")
+SliderContainer.Parent = PageSettings
+SliderContainer.BackgroundColor3 = Color3.fromRGB(18, 26, 42)
+SliderContainer.BackgroundTransparency = 0.4
+SliderContainer.Size = UDim2.new(1, -10, 0, 65)
+
+local SliderCorner = Instance.new("UICorner")
+SliderCorner.CornerRadius = UDim.new(0, 6)
+SliderCorner.Parent = SliderContainer
+
+local SliderTitle = Instance.new("TextLabel")
+SliderTitle.Parent = SliderContainer
+SliderTitle.BackgroundTransparency = 1
+SliderTitle.Position = UDim2.new(0, 12, 0, 8)
+SliderTitle.Size = UDim2.new(1, -24, 0, 20)
+SliderTitle.Font = Enum.Font.SourceSansSemibold
+SliderTitle.Text = "Радиус круга аима (FOV): 120"
+SliderTitle.TextColor3 = Color3.fromRGB(220, 225, 235)
+SliderTitle.TextSize = 14
+SliderTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local SliderBg = Instance.new("TextButton")
+SliderBg.Parent = SliderContainer
+SliderBg.BackgroundColor3 = Color3.fromRGB(35, 45, 65)
+SliderBg.Position = UDim2.new(0, 12, 0, 38)
+SliderBg.Size = UDim2.new(1, -24, 0, 8)
+SliderBg.Text = ""
+
+local SliderFill = Instance.new("Frame")
+SliderFill.Name = "Fill"
+SliderFill.Parent = SliderBg
+SliderFill.BackgroundColor3 = UIColors[currentTheme]
+SliderFill.Size = UDim2.new(120/400, 0, 1, 0)
+
+local SB_Corner = Instance.new("UICorner")
+SB_Corner.CornerRadius = UDim.new(1, 0)
+SB_Corner.Parent = SliderBg
+
+local SF_Corner = Instance.new("UICorner")
+SF_Corner.CornerRadius = UDim.new(1, 0)
+SF_Corner.Parent = SliderFill
+
+-- Переключатель Платформы (Мобильный / ПК)
+local PlatformContainer = Instance.new("Frame")
+PlatformContainer.Parent = PageSettings
+PlatformContainer.BackgroundColor3 = Color3.fromRGB(18, 26, 42)
+PlatformContainer.BackgroundTransparency = 0.4
+PlatformContainer.Size = UDim2.new(1, -10, 0, 50)
+
+local PlatformCorner = Instance.new("UICorner")
+PlatformCorner.CornerRadius = UDim.new(0, 6)
+PlatformCorner.Parent = PlatformContainer
+
+local PlatformLabel = Instance.new("TextLabel")
+PlatformLabel.Parent = PlatformContainer
+PlatformLabel.BackgroundTransparency = 1
+PlatformLabel.Position = UDim2.new(0, 12, 0, 0)
+PlatformLabel.Size = UDim2.new(0, 220, 1, 0)
+PlatformLabel.Font = Enum.Font.SourceSansSemibold
+PlatformLabel.Text = "Режим (Мобильный / ПК)"
+PlatformLabel.TextColor3 = Color3.fromRGB(220, 225, 235)
+PlatformLabel.TextSize = 14
+PlatformLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local PlatformBtn = Instance.new("TextButton")
+PlatformBtn.Parent = PlatformContainer
+PlatformBtn.BackgroundColor3 = Color3.fromRGB(35, 45, 65)
+PlatformBtn.Position = UDim2.new(1, -120, 0.5, -14)
+PlatformBtn.Size = UDim2.new(0, 110, 0, 28)
+PlatformBtn.Font = Enum.Font.SourceSansBold
+PlatformBtn.Text = "📱 Мобильный"
+PlatformBtn.TextColor3 = Color3.fromRGB(255, 128, 0)
+PlatformBtn.TextSize = 13
+
+local PlatformBtnCorner = Instance.new("UICorner")
+PlatformBtnCorner.CornerRadius = UDim.new(0, 6)
+PlatformBtnCorner.Parent = PlatformBtn
+
+-- Переключатель Языка
+local LangContainer = Instance.new("Frame")
+LangContainer.Parent = PageSettings
+LangContainer.BackgroundColor3 = Color3.fromRGB(18, 26, 42)
+LangContainer.BackgroundTransparency = 0.4
+LangContainer.Size = UDim2.new(1, -10, 0, 50)
+
+local LangCorner = Instance.new("UICorner")
+LangCorner.CornerRadius = UDim.new(0, 6)
+LangCorner.Parent = LangContainer
+
+local LangLabel = Instance.new("TextLabel")
+LangLabel.Parent = LangContainer
+LangLabel.BackgroundTransparency = 1
+LangLabel.Position = UDim2.new(0, 12, 0, 0)
+LangLabel.Size = UDim2.new(0, 200, 1, 0)
+LangLabel.Font = Enum.Font.SourceSansSemibold
+LangLabel.Text = "Язык / Language"
+LangLabel.TextColor3 = Color3.fromRGB(220, 225, 235)
+LangLabel.TextSize = 14
+LangLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local LangBtn = Instance.new("TextButton")
+LangBtn.Parent = LangContainer
+LangBtn.BackgroundColor3 = Color3.fromRGB(35, 45, 65)
+LangBtn.Position = UDim2.new(1, -110, 0.5, -14)
+LangBtn.Size = UDim2.new(0, 100, 0, 28)
+LangBtn.Font = Enum.Font.SourceSansBold
+LangBtn.Text = "Русский 🇷🇺"
+LangBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+LangBtn.TextSize = 13
+
+local LangBtnCorner = Instance.new("UICorner")
+LangBtnCorner.CornerRadius = UDim.new(0, 6)
+LangBtnCorner.Parent = LangBtn
+
+-- Переключатель Темы
+local ThemeContainer = Instance.new("Frame")
+ThemeContainer.Parent = PageSettings
+ThemeContainer.BackgroundColor3 = Color3.fromRGB(18, 26, 42)
+ThemeContainer.BackgroundTransparency = 0.4
+ThemeContainer.Size = UDim2.new(1, -10, 0, 50)
+
+local ThemeCorner = Instance.new("UICorner")
+ThemeCorner.CornerRadius = UDim.new(0, 6)
+ThemeCorner.Parent = ThemeContainer
+
+local ThemeLabel = Instance.new("TextLabel")
+ThemeLabel.Parent = ThemeContainer
+ThemeLabel.BackgroundTransparency = 1
+ThemeLabel.Position = UDim2.new(0, 12, 0, 0)
+ThemeLabel.Size = UDim2.new(0, 200, 1, 0)
+ThemeLabel.Font = Enum.Font.SourceSansSemibold
+ThemeLabel.Text = "Цвет интерфейса"
+ThemeLabel.TextColor3 = Color3.fromRGB(220, 225, 235)
+ThemeLabel.TextSize = 14
+ThemeLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local ThemeBtn = Instance.new("TextButton")
+ThemeBtn.Parent = ThemeContainer
+ThemeBtn.BackgroundColor3 = Color3.fromRGB(35, 45, 65)
+ThemeBtn.Position = UDim2.new(1, -110, 0.5, -14)
+ThemeBtn.Size = UDim2.new(0, 100, 0, 28)
+ThemeBtn.Font = Enum.Font.SourceSansBold
+ThemeBtn.Text = "Оранжевый 🟠"
+ThemeBtn.TextColor3 = Color3.fromRGB(255, 128, 0)
+ThemeBtn.TextSize = 13
+
+local ThemeBtnCorner = Instance.new("UICorner")
+ThemeBtnCorner.CornerRadius = UDim.new(0, 6)
+ThemeBtnCorner.Parent = ThemeBtn
+
+-- Логика переключения Платформы
+PlatformBtn.MouseButton1Click:Connect(function()
+    if currentPlatform == "Mobile" then
+        currentPlatform = "PC"
+        PlatformBtn.Text = "💻 ПК (PC)"
+        PlatformBtn.TextColor3 = Color3.fromRGB(46, 204, 113)
+        IconFrame.Visible = false
+        MobileSilentBtn.Visible = false
+    else
+        currentPlatform = "Mobile"
+        PlatformBtn.Text = "📱 Мобильный"
+        PlatformBtn.TextColor3 = Color3.fromRGB(255, 128, 0)
+        IconFrame.Visible = true
+        if _G.SilentAimEnabled then
+            MobileSilentBtn.Visible = true
+        end
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if currentPlatform == "PC" and input.KeyCode == Enum.KeyCode.Insert then
+        MainFrame.Visible = not MainFrame.Visible
+    end
+end)
+
+-- Логика смены языка
+LangBtn.MouseButton1Click:Connect(function()
+    if currentLang == "RU" then
+        currentLang = "EN"
+        LangBtn.Text = "English 🇬🇧"
+        GunNotifyLabel.Text = "⚠️ Sheriff dropped a gun, go grab it!"
+    else
+        currentLang = "RU"
+        LangBtn.Text = "Русский 🇷🇺"
+        GunNotifyLabel.Text = "⚠️ Был убит шериф забери пистолет"
+    end
+    
+    TabMain.Text = "   " .. T("main")
+    TabCombat.Text = "   " .. T("combat")
+    TabFling.Text = "   " .. T("fling")
+    TabSettings.Text = "   " .. T("settings")
+    SearchBox.PlaceholderText = T("search")
+    
+    for _, item in pairs(activeToggles) do
+        item.Label.Text = T(item.Key)
+    end
+end)
+
+-- Логика смены цвета
+ThemeBtn.MouseButton1Click:Connect(function()
+    if currentTheme == "Orange" then
+        currentTheme = "Blue"
+        ThemeBtn.Text = "Синий 🔵"
+        ThemeBtn.TextColor3 = Color3.fromRGB(46, 204, 113)
+    else
+        currentTheme = "Orange"
+        ThemeBtn.Text = "Оранжевый 🟠"
+        ThemeBtn.TextColor3 = Color3.fromRGB(255, 128, 0)
+    end
+    SliderFill.BackgroundColor3 = UIColors[currentTheme]
+end)
+
+-- Страница: Флинг игроков
+local PageFling = Instance.new("ScrollingFrame")
+PageFling.Parent = PagesContainer
+PageFling.BackgroundTransparency = 1
+PageFling.Size = UDim2.new(1, 0, 1, 0)
+PageFling.CanvasSize = UDim2.new(0, 0, 0, 0)
+PageFling.ScrollBarThickness = 3
+PageFling.Visible = false
+
+local FlingListLayout = Instance.new("UIListLayout")
+FlingListLayout.Parent = PageFling
+FlingListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+FlingListLayout.Padding = UDim.new(0, 5)
+
+-- Переключение вкладок
+local function switchTab(tabName)
+    PageMain.Visible = (tabName == "Main")
+    PageCombat.Visible = (tabName == "Combat")
+    PageFling.Visible = (tabName == "Fling")
+    PageSettings.Visible = (tabName == "Settings")
+
+    local function applyStyle(btn, active)
+        btn.BackgroundTransparency = active and 0.3 or 1
+        btn.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 160, 175)
+    end
+
+    applyStyle(TabMain, tabName == "Main")
+    applyStyle(TabCombat, tabName == "Combat")
+    applyStyle(TabFling, tabName == "Fling")
+    applyStyle(TabSettings, tabName == "Settings")
+end
+
+TabMain.MouseButton1Click:Connect(function() switchTab("Main") end)
+TabCombat.MouseButton1Click:Connect(function() switchTab("Combat") end)
+TabFling.MouseButton1Click:Connect(function() switchTab("Fling") end)
+TabSettings.MouseButton1Click:Connect(function() switchTab("Settings") end)
+
+switchTab("Main")
+
+-- Логика слайдера FOV
+local fovRadius = 120
+local draggingFov = false
+
+SliderBg.MouseButton1Down:Connect(function() draggingFov = true end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingFov = false end
+end)
+
+RunService.RenderStepped:Connect(function()
+    FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    FOVCircle.Radius = fovRadius
+
+    if draggingFov then
+        local mousePos = UserInputService:GetMouseLocation()
+        local relativeX = math.clamp(mousePos.X - SliderBg.AbsolutePosition.X, 0, SliderBg.AbsoluteSize.X)
+        local percentage = relativeX / SliderBg.AbsoluteSize.X
+        
+        SliderFill.Size = UDim2.new(percentage, 0, 1, 0)
+        fovRadius = math.floor(percentage * 400)
+        SliderTitle.Text = (currentLang == "RU" and "Радиус круга аима (FOV): " or "Aim FOV Radius: ") .. fovRadius
+    end
+end)
+
+-- Функция флинга
+local function toggleFlingPlayer(targetPlayer, startBtn)
+    if activeFlings[targetPlayer] then
+        activeFlings[targetPlayer] = false
+        activeFlings[targetPlayer] = nil
+        startBtn.Text = "START"
+        startBtn.BackgroundColor3 = Color3.fromRGB(35, 45, 65)
+        startBtn.TextColor3 = Color3.fromRGB(220, 225, 235)
+        return
+    end
+
+    activeFlings[targetPlayer] = true
+    startBtn.Text = "STOP"
+    startBtn.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+    startBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+    task.spawn(function()
+        while activeFlings[targetPlayer] do
+            local targetChar = targetPlayer.Character
+            local localChar = LocalPlayer.Character
+            if not targetChar or not localChar then break end
+            
+            local tRoot = targetChar:FindFirstChild("HumanoidRootPart")
+            local lRoot = localChar:FindFirstChild("HumanoidRootPart")
+            if not tRoot or not lRoot then break end
+
+            local bv = tRoot:FindFirstChild("ShershnevFlingBV")
+            if not bv then
+                bv = Instance.new("BodyVelocity")
+                bv.Name = "ShershnevFlingBV"
+                bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                bv.Parent = tRoot
+            end
+            
+            bv.Velocity = Vector3.new(math.random(-9999, 9999), 99999, math.random(-9999, 9999))
+            tRoot.CFrame = lRoot.CFrame * CFrame.new(0, 0, -2)
+            
+            task.wait(0.05)
+        end
+        
+        local targetChar = targetPlayer.Character
+        if targetChar and targetChar:FindFirstChild("HumanoidRootPart") then
+            local bv = targetChar.HumanoidRootPart:Find
+FirstChild("ShershnevFlingBV")
+            if bv then bv:Destroy() end
+        end
+    end)
+end
+
+local function updateFlingList()
+    for _, child in pairs(PageFling:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+
+    count = 0
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            count = count + 1
+            
+            local row = Instance.new("Frame")
+            row.Parent = PageFling
+            row.BackgroundColor3 = Color3.fromRGB(18, 26, 42)
+            row.BackgroundTransparency = 0.4
+            row.Size = UDim2.new(1, -10, 0, 38)
+
+            local rCorner = Instance.new("UICorner")
+            rCorner.CornerRadius = UDim.new(0, 6)
+            rCorner.Parent = row
+
+            local pLabel = Instance.new("TextLabel")
+            pLabel.Parent = row
+            pLabel.BackgroundTransparency = 1
+            pLabel.Position = UDim2.new(0, 12, 0, 0)
+            pLabel.Size = UDim2.new(1, -85, 1, 0)
+            pLabel.Font = Enum.Font.SourceSansSemibold
+            pLabel.Text = T("flingTitle") .. player.Name
+            pLabel.TextColor3 = Color3.fromRGB(220, 225, 235)
+            pLabel.TextSize = 14
+            pLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+            local startBtn = Instance.new("TextButton")
+            startBtn.Parent = row
+            startBtn.BackgroundColor3 = Color3.fromRGB(35, 45, 65)
+            startBtn.Position = UDim2.new(1, -70, 0.5, -12)
+            startBtn.Size = UDim2.new(0, 60, 0, 24)
+            startBtn.Font = Enum.Font.SourceSansBold
+            startBtn.Text = "START"
+            startBtn.TextColor3 = Color3.fromRGB(220, 225, 235)
+            startBtn.TextSize = 12
+
+            local bCorner = Instance.new("UICorner")
+            bCorner.CornerRadius = UDim.new(0, 4)
+            bCorner.Parent = startBtn
+
+            startBtn.MouseButton1Click:Connect(function()
+                toggleFlingPlayer(player, startBtn)
+            end)
+        end
+    end
+    PageFling.CanvasSize = UDim2.new(0, 0, 0, count * 44)
+end
+
+Players.PlayerAdded:Connect(updateFlingList)
+Players.PlayerRemoving:Connect(updateFlingList)
+updateFlingList()
+
+local function getRole(player)
+    if not player.Character then return "Innocent" end
+    local backpack = player:FindFirstChild("Backpack")
+    local char = player.Character
+    if char:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun")) then
+        return "Sheriff"
+    elseif char:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife")) then
+        return "Murderer"
+    end
+    return "Innocent"
+end
+
+local function getClosestPlayerInsideFOV()
+    local closestPlayer = nil
+    local shortestDistance = fovRadius
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            if getRole(player) == "Murderer" and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                local mRoot = player.Character.HumanoidRootPart
+                local screenPoint, onScreen = Camera:WorldToViewportPoint(mRoot.Position)
+                if onScreen then
+                    local distance = (Vector2.new(screenPoint.X, screenPoint.Y) - center).Magnitude
+                    if distance <= shortestDistance then
+                        shortestDistance = distance
+                        closestPlayer = player
+                    end
+                end
+            end
+        end
+    end
+    return closestPlayer
+end
+
+local function isLocalSheriff()
+    local char = LocalPlayer.Character
+    local backpack = LocalPlayer.Backpack
+    if (char and char:FindFirstChild("Gun")) or (backpack and backpack:FindFirstChild("Gun")) then
+        return true
+    end
+    return false
+end
+
+local function isKeyPressed(key)
+    if currentPlatform == "Mobile" and _G.SilentAimEnabled then
+        return mobileSilentPressed
+    end
+    if bindingKey or bindingAimbotKey then return false end
+    if typeof(key) == "Enum Item' then
+        if key.EnumType == Enum.KeyCode then
+            return UserInputService:IsKeyDown(key)
+        elseif key.EnumType == Enum.UserInputType then
+            return UserInputService:IsMouseButtonPressed(key)
+        end
+    end
+    return false
+end
+
+-- Управление видимостью меню
+local menuVisible = false
+local function toggleMenu()
+    menuVisible = not menuVisible
+    MainFrame.Visible = menuVisible
+    IconFrame.BackgroundTransparency = menuVisible and 0.05 or 0.2
+end
+
+IconFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        toggleMenu()
+    end
+end)
+
+CloseButton.MouseButton1Click:Connect(toggleMenu)
+
+-- Переменные для анимации уведомления пистолета
+local notificationActive = false
+
+RunService.RenderStepped:Connect(function()
+    -- ESP Игроков
+    if _G.EspEnabled then
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local char = player.Character
+                local highlight = char:FindFirstChild("Highlight")
+                if not highlight then
+                    highlight = Instance.new("Highlight")
+                    highlight.Parent = char
+                    highlight.Adornee = char
+                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                end
+                
+                local role = getRole(player)
+                if role == "Murderer" then
+                    highlight.FillColor = Color3.fromRGB(255, 0, 0)
+                elseif role == "Sheriff" then
+                    highlight.FillColor = Color3.fromRGB(0, 0, 255)
+                else
+                    highlight.FillColor = Color3.fromRGB(0, 255, 0)
+                end
+            end
+        end
+    else
+        for _, p in pairs(Players:GetPlayers()) do
+            if p.Character and p.Character:FindFirstChild("Highlight") then
+                p.Character.Highlight:Destroy()
+            end
+        end
+    end
+
+    -- Подсветка упавшего пистолета и плавная анимация уведомления
+    local gunDropped = false
+    if _G.GunEspEnabled then
+        for _, obj in pairs(Workspace:GetChildren()) do
+            if obj.Name == "Gun" or obj.Name == "Drop" then
+                gunDropped = true
+                local highlight = obj:FindFirstChild("GunHighlight")
+                if not highlight then
+                    highlight = Instance.new("Highlight")
+                    highlight.Name = "GunHighlight"
+                    highlight.Parent = obj
+                    highlight.Adornee = obj
+                    highlight.FillColor = Color3.fromRGB(255, 220, 0)
+                    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                end
+            end
+        end
+    else
+        for _, obj in pairs(Workspace:GetChildren()) do
+            if (obj.Name == "Gun" or obj.Name == "Drop") and obj:FindFirstChild("GunHighlight") then
+                obj.GunHighlight:Destroy()
+            end
+        end
+    end
+
+    if _G.GunEspEnabled and gunDropped then
+        if not notificationActive then
+            notificationActive = true
+            GunNotifyLabel.Visible = true
+            GunNotifyLabel:TweenPosition(UDim2.new(0.5, -175, 0.85, 0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.4, true)
+            
+            task.spawn(function()
+                task.wait(3)
+                if notificationActive then
+                    GunNotifyLabel:TweenPosition(UDim2.new(0.5, -175, 1.1, 0), Enum.EasingDirection.In, Enum.EasingStyle.Quad, 0.4, true)
+                    task.wait(0.4)
+                    if not gunDropped then
+                        GunNotifyLabel.Visible = false
+                    end
+                end
+            end)
+        end
+    else
+        notificationActive = false
+        GunNotifyLabel:TweenPosition(UDim2.new(0.5, -175, 1.1, 0), Enum.EasingDirection.In, Enum.EasingStyle.Quad, 0.3, true)
+end
+
+    -- Мгновенный Сайлент-Аим (без задержки по нажатию кнопки)
+    if _G.SilentAimEnabled and isLocalSheriff() then
+        local target = getClosestPlayerInsideFOV()
+        if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+            local mRoot = target.Character.HumanoidRootPart
+            if isKeyPressed(silentAimKey) then
+                local localChar = LocalPlayer.Character
+                if localChar then
+                    local gun = localChar:FindFirstChild("Gun") or (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild("Gun"))
+                    if gun then
+                        -- Быстрое нацеливание и мгновенный выстрел без визуальной задержки камеры
+                        pcall(function()
+                            local args = {
+                                [1] = mRoot.Position,
+                                [2] = "Gun"
+                            }
+                            -- Вызов события выстрела оружия напрямую (если доступно в игре)
+                            local remote = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Events") and gun.Events:FindFirstChild("Shoot")
+                            if remote then
+                                remote:FireServer(mRoot.Position)
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    -- Плавный ПК Аимбот (Aimbot)
+    if _G.AimbotEnabled and currentPlatform == "PC" then
+        local target = getClosestPlayerInsideFOV()
+        if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+            local mRoot = target.Character.HumanoidRootPart
+            if isKeyPressed(aimbotKey) then
+                local targetCFrame = CFrame.new(Camera.CFrame.Position, mRoot.Position)
+                Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, 0.15)
+            end
+        end
+    end
 end)
